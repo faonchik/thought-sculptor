@@ -1,4 +1,4 @@
-import type { AcousticFeatures, AcousticTraceSnapshot, VoiceDNA, VoiceMood } from '../types';
+import type { AcousticFeatures, AcousticTraceSnapshot, VoiceDNA, VoiceMood, MorphStrategy } from '../types';
 import { classifyVoiceEmotion, getMoodProfile } from './emotionClassifier';
 
 export class AudioEngine {
@@ -21,8 +21,18 @@ export class AudioEngine {
   // Voice accumulation statistics for unique sculpture DNA
   private pitchSamples: number[] = [];
   private centroidSamples: number[] = [];
+  private spreadSamples: number[] = [];
+  private flatnessSamples: number[] = [];
+  private rolloffSamples: number[] = [];
+  private zcrSamples: number[] = [];
+  private harmonicSamples: number[] = [];
   private rmsSamples: number[] = [];
   private fluxSamples: number[] = [];
+  private lowBandSamples: number[] = [];
+  private midBandSamples: number[] = [];
+  private highBandSamples: number[] = [];
+  private rmsWindow: number[] = [];
+
   private moodCounts: Record<VoiceMood, number> = {
     angry: 0,
     sad: 0,
@@ -35,8 +45,17 @@ export class AudioEngine {
   private smoothedRMS: number = 0;
   private smoothedPitch: number = 180;
   private smoothedCentroid: number = 0.35;
-  private smoothedFlatness: number = 0.2;
+  private smoothedSpread: number = 0.32;
+  private smoothedFlatness: number = 0.20;
+  private smoothedRolloff: number = 0.40;
+  private smoothedZcr: number = 0.15;
+  private smoothedHarmonicRatio: number = 0.65;
   private silenceFrames: number = 0;
+  private expressionScale: number = 1.0;
+
+  public setExpressionScale(scale: number): void {
+    this.expressionScale = scale;
+  }
 
   // Synthetic demo mode
   private synthOscillator: OscillatorNode | null = null;
@@ -146,13 +165,26 @@ export class AudioEngine {
     this.previousSpectrum = null;
     this.pitchSamples = [];
     this.centroidSamples = [];
+    this.spreadSamples = [];
+    this.flatnessSamples = [];
+    this.rolloffSamples = [];
+    this.zcrSamples = [];
+    this.harmonicSamples = [];
     this.rmsSamples = [];
     this.fluxSamples = [];
+    this.lowBandSamples = [];
+    this.midBandSamples = [];
+    this.highBandSamples = [];
+    this.rmsWindow = [];
     this.moodCounts = { angry: 0, sad: 0, calm: 0, joyful: 0, mysterious: 0 };
     this.smoothedRMS = 0;
     this.smoothedPitch = 180;
     this.smoothedCentroid = 0.35;
-    this.smoothedFlatness = 0.2;
+    this.smoothedSpread = 0.32;
+    this.smoothedFlatness = 0.20;
+    this.smoothedRolloff = 0.40;
+    this.smoothedZcr = 0.15;
+    this.smoothedHarmonicRatio = 0.65;
     this.silenceFrames = 0;
     this.recordingStartTime = performance.now();
   }
@@ -217,7 +249,11 @@ export class AudioEngine {
       this.smoothedRMS += (features.rms - this.smoothedRMS) * 0.45;
       this.smoothedPitch += (features.pitch - this.smoothedPitch) * 0.35;
       this.smoothedCentroid += (features.spectralCentroid - this.smoothedCentroid) * 0.30;
+      this.smoothedSpread += (features.spectralSpread - this.smoothedSpread) * 0.25;
       this.smoothedFlatness += (features.spectralFlatness - this.smoothedFlatness) * 0.25;
+      this.smoothedRolloff += (features.spectralRolloff - this.smoothedRolloff) * 0.25;
+      this.smoothedZcr += (features.zeroCrossingRate - this.smoothedZcr) * 0.30;
+      this.smoothedHarmonicRatio += (features.harmonicRatio - this.smoothedHarmonicRatio) * 0.30;
 
       const normPitch = Math.max(0, Math.min(1, (this.smoothedPitch - 80) / 360));
       const mood = classifyVoiceEmotion(
@@ -235,15 +271,27 @@ export class AudioEngine {
         pitch: this.smoothedPitch,
         normalizedPitch: normPitch,
         spectralCentroid: this.smoothedCentroid,
+        spectralSpread: this.smoothedSpread,
         spectralFlatness: this.smoothedFlatness,
+        spectralRolloff: this.smoothedRolloff,
+        zeroCrossingRate: this.smoothedZcr,
+        harmonicRatio: this.smoothedHarmonicRatio,
         mood,
       };
 
       if (!features.isSilent) {
         this.pitchSamples.push(smoothedFeatures.pitch);
         this.centroidSamples.push(smoothedFeatures.spectralCentroid);
+        this.spreadSamples.push(smoothedFeatures.spectralSpread);
+        this.flatnessSamples.push(smoothedFeatures.spectralFlatness);
+        this.rolloffSamples.push(smoothedFeatures.spectralRolloff);
+        this.zcrSamples.push(smoothedFeatures.zeroCrossingRate);
+        this.harmonicSamples.push(smoothedFeatures.harmonicRatio);
         this.rmsSamples.push(smoothedFeatures.rms);
         this.fluxSamples.push(smoothedFeatures.spectralFlux);
+        this.lowBandSamples.push(smoothedFeatures.lowEnergy);
+        this.midBandSamples.push(smoothedFeatures.midEnergy);
+        this.highBandSamples.push(smoothedFeatures.highEnergy);
         this.moodCounts[mood.mood] = (this.moodCounts[mood.mood] || 0) + 1;
       }
 
@@ -265,12 +313,28 @@ export class AudioEngine {
 
   private extractFeatures(timeDomain: Float32Array, frequencyDomain: Float32Array): AcousticFeatures {
     let sumSquares = 0;
+    let zcCount = 0;
     for (let i = 0; i < timeDomain.length; i++) {
       sumSquares += timeDomain[i] * timeDomain[i];
+      if (i > 0 && ((timeDomain[i] >= 0 && timeDomain[i - 1] < 0) || (timeDomain[i] < 0 && timeDomain[i - 1] >= 0))) {
+        zcCount++;
+      }
     }
     const rawRms = Math.sqrt(sumSquares / timeDomain.length);
-    // Sensitivity auto-scale: human voice effortlessly spans 0.15 - 0.95
     const rms = Math.min(1.0, Math.max(0, rawRms * 8.0));
+    const zeroCrossingRate = Math.min(1.0, zcCount / (timeDomain.length * 0.22));
+
+    this.rmsWindow.push(rms);
+    if (this.rmsWindow.length > 30) this.rmsWindow.shift();
+    let meanRms = 0;
+    for (let j = 0; j < this.rmsWindow.length; j++) meanRms += this.rmsWindow[j];
+    meanRms /= Math.max(1, this.rmsWindow.length);
+    let varRms = 0;
+    for (let j = 0; j < this.rmsWindow.length; j++) {
+      const diff = this.rmsWindow[j] - meanRms;
+      varRms += diff * diff;
+    }
+    const temporalVariability = Math.min(1.0, Math.sqrt(varRms / Math.max(1, this.rmsWindow.length)) * 3.5);
 
     if (rms < 0.035) {
       this.silenceFrames++;
@@ -279,7 +343,7 @@ export class AudioEngine {
     }
     const isSilent = this.silenceFrames > 15;
 
-    const pitch = this.estimatePitchAutocorrelation(timeDomain, rawRms);
+    const { pitch, harmonicRatio } = this.estimatePitchAutocorrelation(timeDomain, rawRms);
 
     const binCount = frequencyDomain.length;
     const nyquist = (this.audioContext?.sampleRate || 44100) / 2;
@@ -293,10 +357,12 @@ export class AudioEngine {
 
     let logSum = 0;
     let linearSum = 0;
+    const linearMagnitudes = new Float32Array(binCount);
 
     for (let i = 0; i < binCount; i++) {
       const db = frequencyDomain[i];
       const linear = Math.max(0, (db + 95) / 65);
+      linearMagnitudes[i] = linear;
       const freq = i * binFreq;
 
       totalMagnitude += linear;
@@ -315,9 +381,33 @@ export class AudioEngine {
       linearSum += safeLin;
     }
 
-    const spectralCentroid = totalMagnitude > 0
-      ? Math.min(1.0, (weightedFrequencySum / totalMagnitude) / 3600)
-      : 0.3;
+    const rawCentroidHz = totalMagnitude > 0 ? weightedFrequencySum / totalMagnitude : 1200;
+    const spectralCentroid = Math.min(1.0, rawCentroidHz / 3600);
+
+    // Spectral Spread (standard deviation of frequencies around centroid)
+    let spreadVariance = 0;
+    if (totalMagnitude > 0) {
+      for (let i = 0; i < binCount; i++) {
+        const freq = i * binFreq;
+        const deltaFreq = freq - rawCentroidHz;
+        spreadVariance += deltaFreq * deltaFreq * linearMagnitudes[i];
+      }
+      spreadVariance /= totalMagnitude;
+    }
+    const spectralSpread = Math.min(1.0, Math.sqrt(spreadVariance) / 2200);
+
+    // Spectral Rolloff (frequency containing 85% of total cumulative energy)
+    const thresholdEnergy = totalMagnitude * 0.85;
+    let cumEnergy = 0;
+    let rolloffFreq = 2000;
+    for (let i = 0; i < binCount; i++) {
+      cumEnergy += linearMagnitudes[i];
+      if (cumEnergy >= thresholdEnergy) {
+        rolloffFreq = i * binFreq;
+        break;
+      }
+    }
+    const spectralRolloff = Math.min(1.0, rolloffFreq / 5500);
 
     const lowEnergy = Math.min(1.0, lowEnergySum / (binCount * 0.18 + 0.001));
     const midEnergy = Math.min(1.0, midEnergySum / (binCount * 0.38 + 0.001));
@@ -345,8 +435,13 @@ export class AudioEngine {
       pitch,
       normalizedPitch: normPitch,
       spectralCentroid,
+      spectralSpread,
       spectralFlatness,
+      spectralRolloff,
       spectralFlux: flux,
+      zeroCrossingRate,
+      harmonicRatio,
+      temporalVariability,
       lowEnergy,
       midEnergy,
       highEnergy,
@@ -356,10 +451,10 @@ export class AudioEngine {
     };
   }
 
-  private estimatePitchAutocorrelation(buffer: Float32Array, rawRms: number): number {
+  private estimatePitchAutocorrelation(buffer: Float32Array, rawRms: number): { pitch: number; harmonicRatio: number } {
     // If background room noise / silent, maintain current pitch so 100 Hz room hum is NOT picked up
     if (rawRms < 0.012) {
-      return this.smoothedPitch || 170;
+      return { pitch: this.smoothedPitch || 170, harmonicRatio: 0.2 };
     }
 
     const sampleRate = this.audioContext?.sampleRate || 44100;
@@ -393,13 +488,15 @@ export class AudioEngine {
       }
     }
 
+    const harmonicRatio = Math.max(0, Math.min(1, maxCorr));
+
     if (bestLag > 0 && maxCorr > 0.40) {
       const estimated = sampleRate / bestLag;
       if (estimated >= 80 && estimated <= 500) {
-        return estimated;
+        return { pitch: estimated, harmonicRatio };
       }
     }
-    return this.smoothedPitch || 170;
+    return { pitch: this.smoothedPitch || 170, harmonicRatio };
   }
 
   private onSnapshotTrigger: (() => void) | null = null;
@@ -436,7 +533,7 @@ export class AudioEngine {
     }
   }
 
-  public async stop(): Promise<{
+  public async stop(expressionScaleOverride?: number): Promise<{
     duration: number;
     audioBlobUrl?: string;
     snapshots: AcousticTraceSnapshot[];
@@ -483,9 +580,28 @@ export class AudioEngine {
 
     const avgPitch = avg(this.pitchSamples, 175);
     const avgCentroid = avg(this.centroidSamples, 0.38);
+    const avgSpread = avg(this.spreadSamples, 0.32);
+    const avgFlatness = avg(this.flatnessSamples, 0.22);
+    const avgRolloff = avg(this.rolloffSamples, 0.42);
+    const avgZcr = avg(this.zcrSamples, 0.16);
+    const avgHarmonicRatio = avg(this.harmonicSamples, 0.65);
     const peakRms = max(this.rmsSamples, 0.40);
     const avgRms = avg(this.rmsSamples, 0.28);
     const avgFlux = avg(this.fluxSamples, 0.30);
+    const lowBandRatio = avg(this.lowBandSamples, 0.45);
+    const midBandRatio = avg(this.midBandSamples, 0.40);
+    const highBandRatio = avg(this.highBandSamples, 0.30);
+
+    // Calculate temporal variability across recording
+    let rmsMean = avgRms;
+    let rmsVariance = 0;
+    if (this.rmsSamples.length > 0) {
+      for (const val of this.rmsSamples) {
+        rmsVariance += (val - rmsMean) * (val - rmsMean);
+      }
+      rmsVariance /= this.rmsSamples.length;
+    }
+    const temporalVariability = Math.min(1.0, Math.sqrt(rmsVariance) * 3.5);
 
     const totalSpokenFrames = this.rmsSamples.length || 1;
     const angryCount = this.moodCounts.angry || 0;
@@ -505,7 +621,6 @@ export class AudioEngine {
     } else if (sadCount > calmCount * 0.45 || (avgPitch < 155 && avgRms < 0.22)) {
       dominantMoodType = 'sad';
     } else {
-      // Standard plurality
       let maxMoodCount = -1;
       const moodList: VoiceMood[] = ['angry', 'joyful', 'mysterious', 'sad', 'calm'];
       for (const m of moodList) {
@@ -517,7 +632,37 @@ export class AudioEngine {
     }
 
     const dominantMood = getMoodProfile(dominantMoodType);
-    const uniqueSeed = Math.abs(Math.round(avgPitch * 41 + avgCentroid * 9109 + peakRms * 1543 + avgFlux * 4397));
+
+    // Determine morphological strategy from acoustic dimensions
+    let morphStrategy: MorphStrategy = 'asymmetric';
+    if (highBandRatio > lowBandRatio * 1.35 || avgPitch > 215 || avgRolloff > 0.65) {
+      morphStrategy = 'spire';          // Вертикальный рост, шпили, башни
+    } else if (lowBandRatio > (midBandRatio + highBandRatio) * 0.65 || avgPitch < 130) {
+      morphStrategy = 'monolith';       // Радиальное расширение, массивное основание
+    } else if (temporalVariability > 0.32 || avgFlux > 0.42) {
+      morphStrategy = 'spiral';         // Скручивание, вихревая динамика
+    } else if (avgFlatness > 0.28 || avgZcr > 0.35) {
+      morphStrategy = 'crest';          // Фрагментация, кристаллические гребни
+    } else if (avgHarmonicRatio > 0.55 && avgFlatness < 0.22) {
+      morphStrategy = 'organic';        // Сглаженная обтекаемая биоморфная форма
+    } else {
+      morphStrategy = 'asymmetric';     // Динамическая направленная асимметрия
+    }
+
+    // High-entropy unique acoustic seed derived from voice signature
+    const signatureHash = Math.abs(
+      Math.round(avgPitch * 7919) ^
+      Math.round(avgCentroid * 104729) ^
+      Math.round(peakRms * 1299709) ^
+      Math.round(avgFlux * 15485863) ^
+      Math.round(avgSpread * 32452843) ^
+      Math.round(avgRolloff * 49979687) ^
+      Math.round(avgZcr * 67867967) ^
+      Math.round(duration * 86028121)
+    );
+
+    const uniqueSeed = signatureHash % 1000000;
+    const expressionScale = expressionScaleOverride ?? this.expressionScale ?? 1.0;
 
     if (this.snapshots.length === 0) {
       this.captureSnapshot(1, {
@@ -525,8 +670,13 @@ export class AudioEngine {
         pitch: this.smoothedPitch || 175,
         normalizedPitch: 0.5,
         spectralCentroid: this.smoothedCentroid || 0.4,
+        spectralSpread: this.smoothedSpread || 0.32,
         spectralFlatness: this.smoothedFlatness || 0.25,
+        spectralRolloff: this.smoothedRolloff || 0.42,
         spectralFlux: 0.35,
+        zeroCrossingRate: this.smoothedZcr || 0.16,
+        harmonicRatio: this.smoothedHarmonicRatio || 0.65,
+        temporalVariability: 0.2,
         lowEnergy: 0.5,
         midEnergy: 0.4,
         highEnergy: 0.35,
@@ -543,10 +693,22 @@ export class AudioEngine {
       voiceDNA: {
         avgPitch,
         avgCentroid,
+        avgSpread,
+        avgFlatness,
+        avgRolloff,
+        avgZcr,
+        avgHarmonicRatio,
+        temporalVariability,
+        lowBandRatio,
+        midBandRatio,
+        highBandRatio,
         peakRms,
         avgFlux,
         uniqueSeed,
+        signatureHash,
         dominantMood,
+        morphStrategy,
+        expressionScale,
       },
     };
   }

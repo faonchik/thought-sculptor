@@ -82,46 +82,50 @@ export function createSculptureMaterial(type: MaterialPresetType): THREE.MeshSta
 
   switch (type) {
     case 'obsidian':
+      // Deep Smoky Volcanic Glass / Polished Onyx
       return new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0x181f2b),
-        roughness: 0.08,
-        metalness: 0.15,
+        color: new THREE.Color(0x32353c),
+        roughness: 0.32,
+        metalness: 0.12,
         bumpMap: textures.bumpMap,
-        bumpScale: 0.015,
+        bumpScale: 0.022,
         roughnessMap: textures.roughnessMap,
         flatShading: false,
       });
 
     case 'graphite':
+      // Cast Patinated Museum Bronze
       return new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0x4f5869),
-        roughness: 0.28,
-        metalness: 0.85,
+        color: new THREE.Color(0x6e5a44),
+        roughness: 0.38,
+        metalness: 0.44,
         bumpMap: textures.bumpMap,
-        bumpScale: 0.03,
+        bumpScale: 0.035,
         roughnessMap: textures.roughnessMap,
         flatShading: false,
       });
 
     case 'ceramic':
+      // Warm Sculptor's Terracotta Clay
       return new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0x8c634f),
-        roughness: 0.92,
-        metalness: 0.0,
+        color: new THREE.Color(0xb55633),
+        roughness: 0.88,
+        metalness: 0.02,
         bumpMap: textures.bumpMap,
-        bumpScale: 0.03,
+        bumpScale: 0.045,
         roughnessMap: textures.roughnessMap,
         flatShading: false,
       });
 
     case 'basalt':
     default:
+      // Carrara Fine White Marble / Sculptural Limestone
       return new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0x4b525f),
-        roughness: 0.80,
-        metalness: 0.06,
+        color: new THREE.Color(0xdfdad0),
+        roughness: 0.44,
+        metalness: 0.04,
         bumpMap: textures.bumpMap,
-        bumpScale: 0.03,
+        bumpScale: 0.032,
         roughnessMap: textures.roughnessMap,
         flatShading: false,
       });

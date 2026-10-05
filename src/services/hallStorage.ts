@@ -7,24 +7,90 @@ export interface HallSpecimen {
   poeticDescription: string;
   createdAt: string;
   material: MaterialPresetType;
+  material2?: MaterialPresetType;
   tactileTags: string[];
   dominantMood: MoodProfile;
   audioBlobUrl?: string;
   authorName: string;
   exhibitedAt: string;
   avgPitch: number;
-  macroType: 'spire' | 'disc' | 'monolith' | 'teardrop' | 'crescent';
+  macroType: 'spire' | 'disc' | 'monolith' | 'teardrop' | 'crescent' | 'spiral';
+
   uniqueSeed: number;
   survivalYears: number;
   thumbnailUrl?: string;
+  isCouples?: boolean;
+  couplesArchetype?: 'dyad' | 'helix';
+  partner1Name?: string;
+  partner2Name?: string;
+  partner1Pitch?: number;
+  partner2Pitch?: number;
 }
 
-const STORAGE_KEY = 'thought_sculptor_hall_v2';
+
+const STORAGE_KEY = 'thought_sculptor_hall_v3';
 
 const INITIAL_EXHIBITS: HallSpecimen[] = [
   {
+    id: 'SPECIMEN #DUET-01',
+    name: '«Сопряжение двух начал: Роман & София»',
+    property: 'Бинарный монолит • Слияние тембров [125 Гц & 245 Гц]',
+    poeticDescription: 'Диалог двух голосов: бархатный мужской баритон (125 Гц, Мрамор) и теплое женское сопрано (245 Гц, Бронза) встретились в неразрывном слиянии монолитов.',
+    createdAt: '08 сентября 2026 г.',
+    material: 'basalt',
+    material2: 'graphite',
+    tactileTags: ['диптих', 'пара', 'слияние монолитов', 'мрамор', 'бронза'],
+    dominantMood: {
+      mood: 'joyful',
+      label: 'Союз / Любовь',
+      description: 'Союз двух любящих голосов',
+      colorHex: '#e11d48',
+    },
+    authorName: 'Роман & София',
+    exhibitedAt: '08.09.2026',
+    avgPitch: 185,
+    macroType: 'monolith',
+    uniqueSeed: 99401,
+    survivalYears: 1200,
+    isCouples: true,
+    couplesArchetype: 'dyad',
+    partner1Name: 'Роман (Баритон)',
+    partner2Name: 'София (Сопрано)',
+    partner1Pitch: 125,
+    partner2Pitch: 245,
+  },
+  {
+    id: 'SPECIMEN #DUET-02',
+    name: '«Голосовое сплетение: Артур & Мила»',
+    property: 'Двойная спираль • Геликоидное сплетение [140 Гц & 265 Гц]',
+    poeticDescription: 'Пластическое сплетение двух голосов в форме двойной спирали. Две ветви из терракоты и оникса обвивают друг друга в бесконечном гармоническом танце.',
+    createdAt: '08 сентября 2026 г.',
+    material: 'ceramic',
+    material2: 'obsidian',
+    tactileTags: ['диптих', 'пара', 'двойная спираль', 'терракота', 'оникс'],
+    dominantMood: {
+      mood: 'mysterious',
+      label: 'Гармония / Страсть',
+      description: 'Гармоничное сплетение тембров',
+      colorHex: '#8b5cf6',
+    },
+    authorName: 'Артур & Мила',
+    exhibitedAt: '08.09.2026',
+    avgPitch: 202,
+    macroType: 'spiral',
+    uniqueSeed: 66209,
+    survivalYears: 1500,
+    isCouples: true,
+    couplesArchetype: 'helix',
+    partner1Name: 'Артур',
+    partner2Name: 'Мила',
+    partner1Pitch: 140,
+    partner2Pitch: 265,
+  },
+  {
     id: 'SPECIMEN #14-7A9B',
     name: 'Кристаллический шпиль эйфории',
+
     property: 'излучает резонанс восходящей октавы',
     poeticDescription: 'Высокий звонкий тембр вытянул породу в стройный вертикальный кристалл с сияющими янтарными плоскостями. Форма держит вектор чистого устремления.',
     createdAt: '06 сентября 2026 г.',
@@ -201,7 +267,15 @@ export function addHallSpecimen(
     uniqueSeed: artefact.voiceDNA?.uniqueSeed || 12345,
     survivalYears: artefact.survivalYears || 437,
     thumbnailUrl,
+    isCouples: artefact.isCouples,
+    couplesArchetype: artefact.couplesArchetype,
+    material2: artefact.material2,
+    partner1Name: artefact.partner1?.name,
+    partner2Name: artefact.partner2?.name,
+    partner1Pitch: artefact.partner1 ? Math.round(artefact.partner1.features.pitch) : undefined,
+    partner2Pitch: artefact.partner2 ? Math.round(artefact.partner2.features.pitch) : undefined,
   };
+
 
   const updated = [newExhibit, ...all];
   try {

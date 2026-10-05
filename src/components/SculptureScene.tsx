@@ -11,6 +11,11 @@ interface SculptureSceneProps {
   materialType: MaterialPresetType;
   onMeshReady: (mesh: THREE.Mesh) => void;
   sculptureRef: React.MutableRefObject<ProceduralSculpture | null>;
+  isWireframe?: boolean;
+  isAutoRotate?: boolean;
+  showGrid?: boolean;
+  zoomDistance?: number;
+  resetTrigger?: number;
 }
 
 export const SculptureScene: React.FC<SculptureSceneProps> = ({
@@ -20,6 +25,11 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
   materialType,
   onMeshReady,
   sculptureRef,
+  isWireframe = false,
+  isAutoRotate = true,
+  showGrid = true,
+  zoomDistance = 6.2,
+  resetTrigger = 0,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -31,13 +41,53 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
   const targetParallax = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const currentParallax = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Camera zoom distance ref
+  const targetDistance = useRef<number>(zoomDistance);
+  const currentDistance = useRef<number>(zoomDistance);
+
   // Mutable refs to eliminate stale closures in 60fps render loop
   const featuresRef = useRef<AcousticFeatures | null>(features);
   const isObservingRef = useRef<boolean>(isObserving);
   const workflowStateRef = useRef<AppWorkflowState>(workflowState);
+  const isAutoRotateRef = useRef<boolean>(isAutoRotate);
+  const isWireframeRef = useRef<boolean>(isWireframe);
+  const showGridRef = useRef<boolean>(showGrid);
+
   featuresRef.current = features;
   isObservingRef.current = isObserving;
   workflowStateRef.current = workflowState;
+  isAutoRotateRef.current = isAutoRotate;
+  isWireframeRef.current = isWireframe;
+  showGridRef.current = showGrid;
+
+  // React to zoomDistance prop changes
+  useEffect(() => {
+    targetDistance.current = zoomDistance;
+  }, [zoomDistance]);
+
+  // React to reset camera trigger
+  useEffect(() => {
+    if (resetTrigger > 0) {
+      targetRotation.current = { x: 0.15, y: -0.3 };
+      targetDistance.current = 6.2;
+      targetParallax.current = { x: 0, y: 0 };
+    }
+  }, [resetTrigger]);
+
+  // Wireframe updates
+  useEffect(() => {
+    if (sculptureRef.current?.mesh?.material) {
+      const mat = sculptureRef.current.mesh.material as THREE.MeshStandardMaterial;
+      mat.wireframe = isWireframe;
+      mat.needsUpdate = true;
+    }
+    if (sculptureRef.current?.mesh2?.material) {
+      const mat2 = sculptureRef.current.mesh2.material as THREE.MeshStandardMaterial;
+      mat2.wireframe = isWireframe;
+      mat2.needsUpdate = true;
+    }
+  }, [isWireframe, sculptureRef]);
+
 
   useEffect(() => {
     const container = mountRef.current;
@@ -46,50 +96,81 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
     const width = container.clientWidth;
     const height = container.clientHeight;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0c11);
+    scene.background = new THREE.Color(0xF5F3EC);
+    scene.fog = new THREE.Fog(0xF5F3EC, 8, 22);
 
-    const gridHelper = new THREE.GridHelper(10, 20, 0x374151, 0x1f2937);
-    gridHelper.position.y = -2.0;
-    scene.add(gridHelper);
+    // Architectural Gallery Plinth & Subtle Datum Grid
+    const gridGroup = new THREE.Group();
+    const gridHelper = new THREE.GridHelper(12, 24, 0xD4CFBF, 0xE5E0D5);
+    gridHelper.position.y = -1.98;
+    gridGroup.add(gridHelper);
 
-    const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 60);
-    camera.position.set(0, 0, 6.2);
+    // Refined stone pedestal base
+    const pedestalGeo = new THREE.CylinderGeometry(2.1, 2.2, 0.08, 64);
+    const pedestalMat = new THREE.MeshStandardMaterial({
+      color: 0xE8E4DA,
+      roughness: 0.88,
+      metalness: 0.02,
+    });
+    const pedestal = new THREE.Mesh(pedestalGeo, pedestalMat);
+    pedestal.position.y = -2.02;
+    pedestal.receiveShadow = true;
+    gridGroup.add(pedestal);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    // Fine concentric ring marker on plinth
+    const ringGeo = new THREE.RingGeometry(1.8, 1.815, 64);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xD0CBBF, side: THREE.DoubleSide });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.rotation.x = -Math.PI / 2;
+    ringMesh.position.y = -1.97;
+    gridGroup.add(ringMesh);
+
+    scene.add(gridGroup);
+
+    const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 60);
+    camera.position.set(0, 0, currentDistance.current);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.35;
+    renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(renderer.domElement);
 
-    const ambientLight = new THREE.AmbientLight(0x2d323d, 1.4);
+    // Sculptural chiaroscuro lighting (dramatic facets and deep shadows)
+    const ambientLight = new THREE.AmbientLight(0xFFF7EC, 0.75);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
-    keyLight.position.set(4.0, 4.8, 3.8);
+    const keyLight = new THREE.DirectionalLight(0xFFFDF6, 3.4);
+    keyLight.position.set(4.5, 5.8, 3.8);
     keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.bias = -0.0005;
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0x9cb2d4, 1.8);
-    fillLight.position.set(-4.0, 2.0, 3.0);
+    const fillLight = new THREE.DirectionalLight(0xD6E4F0, 0.6);
+    fillLight.position.set(-4.0, 2.0, 2.5);
     scene.add(fillLight);
 
-    const rimLight = new THREE.DirectionalLight(0xebb36a, 2.4);
-    rimLight.position.set(-3.5, -2.5, -4.0);
+    const rimLight = new THREE.DirectionalLight(0xEFE4D4, 2.0);
+    rimLight.position.set(-3.2, 3.2, -3.8);
     scene.add(rimLight);
 
-    const corePointLight = new THREE.PointLight(0xff4500, 0, 8);
+    const corePointLight = new THREE.PointLight(0xC25E38, 0, 8);
     corePointLight.position.set(0, 0, 0);
     scene.add(corePointLight);
 
     const sculpture = new ProceduralSculpture();
     const initialMaterial = createSculptureMaterial(materialType);
+    initialMaterial.wireframe = isWireframeRef.current;
     sculpture.mesh.material = initialMaterial;
-    scene.add(sculpture.mesh);
+    scene.add(sculpture.rootGroup);
     sculptureRef.current = sculpture;
-    onMeshReady(sculpture.mesh);
+    onMeshReady(sculpture.rootGroup as any);
+
 
     // Particle silhouette
     const ashCount = 1400;
@@ -105,7 +186,6 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
       const part = Math.random();
 
       if (part < 0.22) {
-        // Head (sphere at y = 0.85)
         const u = Math.random();
         const v = Math.random();
         const theta = u * 2.0 * Math.PI;
@@ -115,19 +195,16 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
         y = 0.85 + r * Math.sin(phi) * Math.sin(theta);
         z = r * Math.cos(phi);
       } else if (part < 0.28) {
-        // Neck
         x = (Math.random() - 0.5) * 0.18;
         y = 0.52 + Math.random() * 0.15;
         z = (Math.random() - 0.5) * 0.18;
       } else if (part < 0.65) {
-        // Shoulders & Chest / Torso
-        const ty = (Math.random() - 0.5) * 0.8; // -0.4 .. 0.4
+        const ty = (Math.random() - 0.5) * 0.8;
         const shoulderWidth = ty > 0 ? 0.65 : 0.45;
         x = (Math.random() - 0.5) * shoulderWidth;
         y = 0.1 + ty;
         z = (Math.random() - 0.5) * 0.28;
       } else {
-        // Arms / hips
         const side = Math.random() > 0.5 ? 1 : -1;
         x = side * (0.35 + Math.random() * 0.2);
         y = -0.35 + Math.random() * 0.7;
@@ -151,11 +228,11 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
     ashGeometry.setAttribute('position', new THREE.BufferAttribute(ashPos, 3));
 
     const ashMaterial = new THREE.PointsMaterial({
-      color: 0x9ca3af,
-      size: 0.045,
+      color: 0x8c8273,
+      size: 0.035,
       transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
+      opacity: 0.45,
+      blending: THREE.NormalBlending,
       depthWrite: false,
     });
     const ashPoints = new THREE.Points(ashGeometry, ashMaterial);
@@ -179,11 +256,11 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
     }
     sparkGeometry.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
     const sparkMaterial = new THREE.PointsMaterial({
-      color: 0xff6b35,
-      size: 0.06,
+      color: 0xc25e38,
+      size: 0.05,
       transparent: true,
       opacity: 0,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false,
     });
     const sparkPoints = new THREE.Points(sparkGeometry, sparkMaterial);
@@ -236,17 +313,15 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
     const sandPoints = new THREE.Points(sandGeo, sandMat);
     scene.add(sandPoints);
 
-    // Distant background field
+    // Distant stars background
     const starsCount = 280;
     const starsGeo = new THREE.BufferGeometry();
     const starsPos = new Float32Array(starsCount * 3);
-    const starsLife = new Float32Array(starsCount);
     for (let i = 0; i < starsCount; i++) {
       const idx = i * 3;
       starsPos[idx] = (Math.random() - 0.5) * 35;
       starsPos[idx + 1] = (Math.random() - 0.5) * 35;
       starsPos[idx + 2] = -15 - Math.random() * 15;
-      starsLife[i] = Math.random(); // 0..1 fade phase
     }
     starsGeo.setAttribute('position', new THREE.BufferAttribute(starsPos, 3));
     const starsMat = new THREE.PointsMaterial({
@@ -287,12 +362,19 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
       isDraggingRef.current = false;
     };
 
+    // Mouse wheel zoom
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      targetDistance.current = Math.max(3.0, Math.min(10.0, targetDistance.current + e.deltaY * 0.004));
+    };
+
     container.addEventListener('mousedown', onPointerDown);
     window.addEventListener('mousemove', onPointerMove);
     window.addEventListener('mouseup', onPointerUp);
     container.addEventListener('touchstart', onPointerDown, { passive: true });
     window.addEventListener('touchmove', onPointerMove, { passive: true });
     window.addEventListener('touchend', onPointerUp);
+    container.addEventListener('wheel', onWheel, { passive: false });
 
     const handleResize = () => {
       if (!container) return;
@@ -319,20 +401,29 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
       const state = workflowStateRef.current;
       const liveFeat = featuresRef.current;
 
+      // Update grid visibility
+      gridGroup.visible = showGridRef.current;
+
+      // Smooth camera parallax & zoom
       currentParallax.current.x += (targetParallax.current.x - currentParallax.current.x) * 0.05;
       currentParallax.current.y += (targetParallax.current.y - currentParallax.current.y) * 0.05;
+      currentDistance.current += (targetDistance.current - currentDistance.current) * 0.08;
+
       camera.position.x = currentParallax.current.x;
       camera.position.y = currentParallax.current.y;
+      camera.position.z = currentDistance.current;
       camera.lookAt(0, 0, 0);
 
-      if (!isDraggingRef.current) {
+      // Rotation handling with auto-rotate toggle
+      if (!isDraggingRef.current && isAutoRotateRef.current) {
         targetRotation.current.y += delta * (state === 'artefact' ? 0.03 : 0.05);
       }
       currentRotation.current.x += (targetRotation.current.x - currentRotation.current.x) * 0.08;
       currentRotation.current.y += (targetRotation.current.y - currentRotation.current.y) * 0.08;
 
-      sculpture.mesh.rotation.x = currentRotation.current.x;
-      sculpture.mesh.rotation.y = currentRotation.current.y;
+      sculpture.rootGroup.rotation.x = currentRotation.current.x;
+      sculpture.rootGroup.rotation.y = currentRotation.current.y;
+
 
       if (state === 'dormant') {
         sculpture.mesh.visible = true;
@@ -422,6 +513,13 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
         sculpture.update(delta, liveFeat, false);
       }
 
+      // Smooth return to base scale if pulsed
+      if (sculpture.mesh.scale.x > 1.001) {
+        sculpture.mesh.scale.x += (1.0 - sculpture.mesh.scale.x) * 0.12;
+        sculpture.mesh.scale.y += (1.0 - sculpture.mesh.scale.y) * 0.12;
+        sculpture.mesh.scale.z += (1.0 - sculpture.mesh.scale.z) * 0.12;
+      }
+
       renderer.render(scene, camera);
     };
 
@@ -436,6 +534,7 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
       container.removeEventListener('touchstart', onPointerDown);
       window.removeEventListener('touchmove', onPointerMove);
       window.removeEventListener('touchend', onPointerUp);
+      container.removeEventListener('wheel', onWheel);
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
@@ -443,14 +542,16 @@ export const SculptureScene: React.FC<SculptureSceneProps> = ({
     };
   }, []);
 
-  // Update material preset dynamically
+  // Update material preset dynamically with tactile pulse
   useEffect(() => {
-    if (sculptureRef.current && sculptureRef.current.mesh) {
+    if (sculptureRef.current && sculptureRef.current.mesh && !sculptureRef.current.isCouples) {
       const newMaterial = createSculptureMaterial(materialType);
+      newMaterial.wireframe = isWireframeRef.current;
       sculptureRef.current.mesh.material = newMaterial;
+      sculptureRef.current.mesh.scale.set(1.05, 1.05, 1.05);
     }
   }, [materialType, sculptureRef]);
 
+
   return <div ref={mountRef} className="canvas-wrapper" />;
 };
-
